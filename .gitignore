@@ -1,3 +1,5 @@
 README.txt
 *.pyc
 .env/
+Django_Drupal_Password_Hasher.egg-info/
+dist/
