@@ -13,3 +13,7 @@ In your virtualenv
 In your .py file
 
     from djangodrupalpasswordhasher import drupal_password_hasher
+
+Add the following line to your settings.py file in the "PASSWORD_HASHERS" section
+
+    'djangodrupalpasswordhasher.drupal_password_hasher.DrupalPasswordHasher',
