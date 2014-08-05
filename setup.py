@@ -5,8 +5,8 @@ except ImportError:
 
 setup(
     name='Django-Drupal-Password-Hasher',
-    version='0.1.0',
-    author='ARC Staff',
+    version='0.1.1',
+    author='ARC Staff, pberndt',
     author_email='consultants@pdx.edu',
     packages=['djangodrupalpasswordhasher','djangodrupalpasswordhasher.test'],
     url='http://pypi.python.org/pypi/Django-drupal-password-hasher/',

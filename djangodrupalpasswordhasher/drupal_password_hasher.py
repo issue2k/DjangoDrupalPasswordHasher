@@ -1,77 +1,116 @@
-import os, sys
-import collections
-from hashlib import sha512
 from django.contrib.auth.hashers import BasePasswordHasher
+from django.utils.crypto import get_random_string
+from collections import OrderedDict
+from django.utils.translation import ugettext_noop as _
+import hashlib
+
+class DrupalPasswordHasherInvalidHashException(Exception):
+    pass
 
 class DrupalPasswordHasher(BasePasswordHasher):
-    '''
-    Hashes a Drupal 7 password with the prefix 'drupal'
-    Used for legacy passwords from VCP 2.0.
+    """
+        Authenticate against Drupal 7 passwords.
 
-    snippet from https://djangosnippets.org/snippets/2729/#c4520
-    modified for compatibility with Django 1.6
-    '''
-
+        The passwords should be prefixed with drupal$ upon importing, such that
+        Django recognizes them correctly. Drupal's method does some funny stuff
+        (like truncating the hashed password), so you might not want to use this
+        hasher for storing new passwords.
+    """
     algorithm = "drupal"
-    iter_code = 'C'
-    salt_length = 8
 
-    def encode(self, password, salt, iter_code=None):
-        """The Drupal 7 method of encoding passwords"""
+    _DRUPAL_HASH_LENGTH = 55
+    _DRUPAL_HASH_COUNT = 15
 
-        _ITOA64 = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+    _digests = {
+        '$S$': hashlib.sha512,
+        '$H$': hashlib.md5,
+        '$P$': hashlib.md5,
+    }
 
-        if iter_code == None:
-            iterations = 2 ** _ITOA64.index(self.iter_code)
-        else:
-            iterations = 2 ** _ITOA64.index(iter_code)
+    _itoa64 = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
-        # convert these to bytestrings to get rid of dumb decoding errors:
-        salt = str(salt)
-        password = str(password)
+    def _get_settings(self, encoded):
+        settings_bin = encoded[:12]
+        count_log2 = self._itoa64.index(settings_bin[3])
+        count = 1 << count_log2
+        salt = settings_bin[4:12]
+        return {
+            'count': count,
+            'salt': salt
+        }
 
-        hashed_string = sha512(salt + password).digest()
-
-        for i in range(iterations):    
-            hashed_string = sha512(hashed_string + password).digest()
-
-
-        l = len(hashed_string)
-
-        output = ''
+    def _drupal_b64(self, input):
+        output = ""
+        count = len(input)
         i = 0
-
-        while i < l:
-            value = ord(hashed_string[i])
-            i = i + 1
-
-            output += _ITOA64[value & 0x3f]
-            if i < l:
-                value |= ord(hashed_string[i]) << 8
-
-            output += _ITOA64[(value >> 6) & 0x3f]
-            if i >= l:
-                break
+        while True:
+            value = ord(input[i])
             i += 1
-
-            if i < l:
-                value |= ord(hashed_string[i]) << 16
-
-            output += _ITOA64[(value >> 12) & 0x3f]
-            if i >= l:
-                break
+            output += self._itoa64[value & 0x3f]
+            if i < count:
+                value |= ord(input[i]) << 8
+            output += self._itoa64[(value >> 6) & 0x3f]
             i += 1
+            if i >= count:
+                break
+            if i < count:
+                value |= ord(input[i]) << 16
+            output += self._itoa64[(value >> 12) & 0x3f]
+            i += 1
+            if i >= count:
+                break
+            output += self._itoa64[(value >> 18) & 0x3f]
+        return output
 
-            output += _ITOA64[(value >> 18) & 0x3f]
+    def _apply_hash(self, password, digest, settings):
+        password_hash = digest(settings["salt"] + password).digest()
+        for i in range(settings["count"]):
+            password_hash = digest(password_hash + password).digest()
+        return self._drupal_b64(password_hash)[:self._DRUPAL_HASH_LENGTH - 12]
 
-        long_hashed = "%s$%s%s%s" % (self.algorithm, iter_code,
-                salt, output)
-        return long_hashed[:59]
+    def salt(self):
+        return get_random_string(8)
 
+    def encode(self, password, salt):
+        assert len(salt) == 8
+        digest = '$S$'
+        settings = {
+            'count': 1 << self._DRUPAL_HASH_COUNT,
+            'salt': salt
+        }
+        encoded_hash = self._apply_hash(password, self._digests[digest], settings)
+        return self.algorithm + "$" + digest + self._itoa64[self._DRUPAL_HASH_COUNT] + salt + encoded_hash
 
     def verify(self, password, encoded):
-        hash = encoded.split("$")[1]
-        iter_code = hash[0]
-        salt = hash[1:1 + self.salt_length]        
-        test_encoded = self.encode(password, salt, iter_code)
-        return encoded == test_encoded
+        encoded = encoded.split("$", 1)[1]
+        if encoded[0] == 'U':
+            # Imported passwords from old Drupal versions, see user_update_7000()
+            encoded = encoded[1:]
+            password = hashlib.md5(password).hexdigest()
+        digest = encoded[:3]
+        if digest not in self._digests:
+            raise DrupalPasswordHasherInvalidHashException()
+        digest = self._digests[digest]
+        settings = self._get_settings(encoded)
+
+        encoded_hash = encoded[12:]
+        password_hash = self._apply_hash(password, digest, settings)
+        
+        return password_hash == encoded_hash
+
+    def safe_summary(self, encoded):
+        encoded = encoded.split("$", 1)[1]
+        settings = self._get_settings(encoded)
+        return OrderedDict([
+            (_('algorithm'), self.algorithm),
+            (_('iterations'), settings["count"]),
+            (_('salt'), settings["salt"]),
+            (_('hash'), encoded[12:]),
+        ])
+
+    def must_update(self, encoded):
+        encoded = encoded.split("$", 1)[1]
+        if encoded[0] == 'U':
+            return True
+        settings = self._get_settings(encoded)
+        return settings["count"] < (1 << self._DRUPAL_HASH_COUNT)
