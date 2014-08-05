@@ -4,6 +4,8 @@
 
 Django-Drupal Password Hasher is a simple package created to hash Drupal 7 passwords with the prefix 'drupal'
 
+Note: Django uses the first entry in the PASSWORD_HASHERS section of your settings file for user authentication by default. If you have other password hashers but want to use this one, make sure it is the first entry in the list.
+
 ## Installation
 
 In your virtualenv
