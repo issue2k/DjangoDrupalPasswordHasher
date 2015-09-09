@@ -44,17 +44,17 @@ class DrupalPasswordHasher(BasePasswordHasher):
         count = len(input)
         i = 0
         while True:
-            value = ord(input[i])
+            value = input[i]
             i += 1
             output += self._itoa64[value & 0x3f]
             if i < count:
-                value |= ord(input[i]) << 8
+                value |= input[i] << 8
             output += self._itoa64[(value >> 6) & 0x3f]
             i += 1
             if i >= count:
                 break
             if i < count:
-                value |= ord(input[i]) << 16
+                value |= input[i] << 16
             output += self._itoa64[(value >> 12) & 0x3f]
             i += 1
             if i >= count:
@@ -63,9 +63,9 @@ class DrupalPasswordHasher(BasePasswordHasher):
         return output
 
     def _apply_hash(self, password, digest, settings):
-        password_hash = digest(settings["salt"] + password).digest()
+        password_hash = digest(settings["salt"].encode() + password.encode()).digest()
         for i in range(settings["count"]):
-            password_hash = digest(password_hash + password).digest()
+            password_hash = digest(password_hash + password.encode()).digest()
         return self._drupal_b64(password_hash)[:self._DRUPAL_HASH_LENGTH - 12]
 
     def salt(self):
@@ -95,7 +95,7 @@ class DrupalPasswordHasher(BasePasswordHasher):
 
         encoded_hash = encoded[12:]
         password_hash = self._apply_hash(password, digest, settings)
-        
+
         return password_hash == encoded_hash
 
     def safe_summary(self, encoded):
